@@ -120,11 +120,7 @@ confidence. It does not return mail text, model explanation, account or IP.
 Finished verdicts remain independently cached for 120 seconds after completion,
 with a 10,000-entry cap; controller acknowledgement does not remove them. This
 short cache is for scans/retries and does not replace the retained result queue.
-When a cached verdict expires or is evicted, a new submission of the same event
-may queue fresh inference under the normal rate/capacity limits. Only actual
-queued/running work reports pending; cached verdicts report their finished state.
-Reanalysis does not double-count reputation because Redis still deduplicates
-application by event ID. Cache, queue, deduplication
+Expired/evicted results cannot produce a live score. Cache, queue, deduplication
 and collection rows are RAM-only and lost on bridge restart.
 
 `completed_at` now records actual completion rather than classification start.

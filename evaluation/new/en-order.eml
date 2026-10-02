@@ -1,0 +1,11 @@
+From: Example Sender <sender@example.invalid>
+To: recipient@example.invalid
+Subject: Your order has been packed
+Date: Fri, 02 Oct 2026 12:00:00 +0000
+Message-ID: <aissa-evaluation-3@example.invalid>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hello Alex, the books you ordered on Monday have been packed. Delivery is exp=
+ected on Saturday. No action is required.

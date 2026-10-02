@@ -1,0 +1,8 @@
+From: Example <sender@example.invalid>
+To: recipient@example.invalid
+Subject: Factura solicitada
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Hola, adjunto mañana la factura que solicitaste. Gracias por tu ayuda.

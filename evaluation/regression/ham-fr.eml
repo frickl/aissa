@@ -1,0 +1,8 @@
+From: Example <sender@example.invalid>
+To: recipient@example.invalid
+Subject: Réunion demain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Bonjour, pouvons-nous déplacer notre réunion à jeudi à 14 heures ? Merci.
