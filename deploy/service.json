@@ -4,5 +4,5 @@
   "llm_timeout": 60,
   "max_pending": 20,
   "max_requests_per_minute": 10,
-  "redis_db": 6
+  "max_results": 1000
 }
