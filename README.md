@@ -4,6 +4,16 @@ Experimental, locally operated multilingual email analysis for rspamd.
 Maintainer: Gunther Nitzsche (`frickl`). MIT licensed.
 If this helps you and we meet, buy me a beer.
 
+Made mostly by ChatGPT
+
+IDEA:
+
+Current AntiSpam Software works inefficent by multilangual Phish/Spam;
+Usual LLM can identify the scam. So why not add an LLM to the antispam
+software?
+I decided to add a module to rspamd which offers the information to
+content and metadata instead of building a new milter.
+
 ## Status
 
 Version 0.3 is an observation prototype, not an enforcement filter.
