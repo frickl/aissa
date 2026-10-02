@@ -13,3 +13,5 @@ results*.jsonl
 *.before-auth
 
 /t.py
+.aissa-scoring-backup-*/
+.aissa-prompt-backup-*/
