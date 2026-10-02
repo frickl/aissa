@@ -1,0 +1,8 @@
+From: Example <sender@example.invalid>
+To: recipient@example.invalid
+Subject: Votre compte sera suspendu
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Votre compte sera supprimé dans 30 minutes. Confirmez votre mot de passe sur https://verification.example.invalid/login pour éviter la suspension.
