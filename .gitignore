@@ -7,3 +7,9 @@ dist/
 .env
 private_samples/
 results*.jsonl
+
+.aissa-backup-*/
+
+*.before-auth
+
+/t.py
