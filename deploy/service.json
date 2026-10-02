@@ -1,0 +1,8 @@
+{
+  "token_file": "/etc/aissa/token",
+  "model": "qwen2.5:1.5b",
+  "llm_timeout": 60,
+  "max_pending": 20,
+  "max_requests_per_minute": 10,
+  "redis_db": 6
+}

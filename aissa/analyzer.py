@@ -25,9 +25,9 @@ Distinguish legitimate correspondence, marketing bulk, unsolicited spam and
 phishing (credential theft, payment diversion or deceptive social engineering).
 If evidence is insufficient use uncertain. Return only JSON matching the schema:
 classification, confidence (a self-assessment, NOT a calibrated probability),
-reason (short English explanation). This is advisory, not an enforcement decision.
 Confidence MUST be a decimal number between 0.0 and 1.0.
 For example, 95 percent MUST be written as 0.95, never 95.
+reason (short English explanation). This is advisory, not an enforcement decision.
 """
 
 
