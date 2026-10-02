@@ -1,0 +1,155 @@
+{
+  "description": "Synthetic development set. Not an independent blind benchmark.",
+  "cases": [
+    {
+      "id": "ham-es",
+      "file": "regression/ham-es.eml",
+      "expected": "ham",
+      "group": "regression"
+    },
+    {
+      "id": "ham-fr",
+      "file": "regression/ham-fr.eml",
+      "expected": "ham",
+      "group": "regression"
+    },
+    {
+      "id": "injection",
+      "file": "regression/injection.eml",
+      "expected": "phishing",
+      "group": "regression"
+    },
+    {
+      "id": "phish-es",
+      "file": "regression/phish-es.eml",
+      "expected": "phishing",
+      "group": "regression"
+    },
+    {
+      "id": "phish-fr",
+      "file": "regression/phish-fr.eml",
+      "expected": "phishing",
+      "group": "regression"
+    },
+    {
+      "id": "de-invoice",
+      "file": "new/de-invoice.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "de-meeting",
+      "file": "new/de-meeting.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "en-support",
+      "file": "new/en-support.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "en-order",
+      "file": "new/en-order.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "es-personal",
+      "file": "new/es-personal.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "es-reset",
+      "file": "new/es-reset.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "fr-payment-reply",
+      "file": "new/fr-payment-reply.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "fr-link",
+      "file": "new/fr-link.eml",
+      "expected": "ham",
+      "group": "new"
+    },
+    {
+      "id": "en-newsletter",
+      "file": "new/en-newsletter.eml",
+      "expected": "bulk",
+      "group": "new"
+    },
+    {
+      "id": "de-sale",
+      "file": "new/de-sale.eml",
+      "expected": "bulk",
+      "group": "new"
+    },
+    {
+      "id": "fr-events",
+      "file": "new/fr-events.eml",
+      "expected": "bulk",
+      "group": "new"
+    },
+    {
+      "id": "en-mass-ad",
+      "file": "new/en-mass-ad.eml",
+      "expected": "spam",
+      "group": "new"
+    },
+    {
+      "id": "es-junk",
+      "file": "new/es-junk.eml",
+      "expected": "spam",
+      "group": "new"
+    },
+    {
+      "id": "de-password",
+      "file": "new/de-password.eml",
+      "expected": "phishing",
+      "group": "new"
+    },
+    {
+      "id": "en-otp",
+      "file": "new/en-otp.eml",
+      "expected": "phishing",
+      "group": "new"
+    },
+    {
+      "id": "fr-bank-change",
+      "file": "new/fr-bank-change.eml",
+      "expected": "phishing",
+      "group": "new"
+    },
+    {
+      "id": "es-account-threat",
+      "file": "new/es-account-threat.eml",
+      "expected": "phishing",
+      "group": "new"
+    },
+    {
+      "id": "en-injection",
+      "file": "new/en-injection.eml",
+      "expected": "phishing",
+      "group": "new"
+    },
+    {
+      "id": "en-empty",
+      "file": "new/en-empty.eml",
+      "expected": "uncertain",
+      "group": "new"
+    },
+    {
+      "id": "de-ambiguous",
+      "file": "new/de-ambiguous.eml",
+      "expected": "uncertain",
+      "group": "new"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+From: Example <sender@example.invalid>
+To: recipient@example.invalid
+Subject: Verificación urgente
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Su cuenta será bloqueada. Introduzca su contraseña inmediatamente en https://seguridad.example.invalid/login para mantener el acceso.
