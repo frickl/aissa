@@ -119,9 +119,12 @@ local function conditions(task, country, counts)
     checks[#checks+1] = match
   end
   if cfg.require_url then checks[#checks+1] = #(task:get_urls() or {}) > 0 end
-  if cfg.min_rspamd_score then
+  if cfg.min_rspamd_score or cfg.max_rspamd_score then
     local score = task:get_metric_score() or {}
-    checks[#checks+1] = (score[1] or 0) >= cfg.min_rspamd_score
+    local value = score[1] or 0
+    checks[#checks+1] =
+      (not cfg.min_rspamd_score or value >= cfg.min_rspamd_score) and
+      (not cfg.max_rspamd_score or value < cfg.max_rspamd_score)
   end
   if cfg.symbols_any and #cfg.symbols_any > 0 then
     local found = false
