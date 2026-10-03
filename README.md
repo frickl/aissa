@@ -57,8 +57,9 @@ new samples are refused instead of deleting older results.
 ## Configuration
 
 Selection: /etc/rspamd/local.d/aissa.conf.
-Service: /etc/aissa/service.json.
-Shared local API token: /etc/aissa/token.
+Service: /opt/aissa/deploy/service.local.json (untracked).
+Python API token: /opt/aissa/deploy/aissa.token (untracked).
+Rspamd API token: /etc/rspamd/local.d/aissa.token (same secret).
 
 Sampling applies after conditions:
 * 100: every eligible message, subject to capacity.
@@ -115,24 +116,22 @@ Reputation:
 Assumptions: /opt/aissa, Python 3.11, existing rspamd and local Ollama.
 No additional Python dependencies are required.
 
-As root, create the service user and shared-token directory once:
+As root, create the service user and local token once:
 
 ```bash
 getent group _rspamd
 id aissa || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin aissa
-usermod -a -G _rspamd aissa
-install -d -m 0750 -o root -g _rspamd /etc/aissa
-test -f /etc/aissa/token || python3 -c 'import secrets; print(secrets.token_hex(32))' > /etc/aissa/token
-chown aissa:_rspamd /etc/aissa/token
-chmod 0640 /etc/aissa/token
-cat >> /opt/aissa/t.py <<'AISSA_UPDATE_END'
+test -f /opt/aissa/deploy/aissa.token || python3 -c 'import secrets; print(secrets.token_hex(32))' > /opt/aissa/deploy/aissa.token
+chown root:aissa /opt/aissa/deploy/aissa.token
+chmod 0640 /opt/aissa/deploy/aissa.token
+install -m 0640 -o root -g _rspamd /opt/aissa/deploy/aissa.token /etc/rspamd/local.d/aissa.token
 
 ```
 
 Copy the example service configuration, preserving intentional local changes:
 
 ```bash
-install -m 0640 -o root -g _rspamd deploy/service.json /etc/aissa/service.json
+test -f deploy/service.local.json || install -m 0640 -o root -g aissa deploy/service.json deploy/service.local.json
 install -m 0644 deploy/aissa.service /etc/systemd/system/aissa.service
 systemctl daemon-reload
 systemctl enable --now aissa
@@ -145,7 +144,7 @@ Ollama must remain on 127.0.0.1:11434.
 
 ## rspamd setup
 
-Copy rspamd/aissa.lua to /etc/rspamd/aissa.lua. Merge the example configuration
+Copy rspamd/aissa.lua to /etc/rspamd/local.d/aissa.lua. Merge the example configuration
 into /etc/rspamd/local.d/aissa.conf, preserving your selected criteria.
 
 Merge once into /etc/rspamd/rspamd.conf.local:
@@ -349,3 +348,21 @@ See [live scoring](docs/aissa-scoring.md) and
 [classifier evaluation](docs/aissa-evaluation.md) for details and limitations.
 
 <!-- AISSA_FLOW_END -->
+
+### Migrating an existing /etc/aissa installation
+
+Preserve the installed service JSON values and token; do not overwrite them
+with deploy/service.json. Copy the token to /opt/aissa/deploy/aissa.token,
+change only token_file in the copied JSON, and install it as
+/opt/aissa/deploy/service.local.json. Both files should be root:aissa mode 0640.
+Keep the existing matching Rspamd token in /etc/rspamd/local.d/aissa.token.
+Use a systemd drop-in to clear the old ExecStart and replace it with:
+
+```
+ExecStart=/usr/bin/python3 -m aissa.bridge --config /opt/aissa/deploy/service.local.json
+```
+
+Run daemon-reload and restart aissa. Verify the new command, service status,
+listener on 127.0.0.1:8765 and a successful authenticated submission before
+removing the old files. Restarting loses RAM jobs/results; choose an idle moment.
+Existing systemd hardening and local overrides should remain in effect.

@@ -1,5 +1,5 @@
 {
-  "token_file": "/etc/aissa/token",
+  "token_file": "/opt/aissa/deploy/aissa.token",
   "model": "qwen2.5:1.5b",
   "llm_timeout": 60,
   "max_text_chars": 1000,

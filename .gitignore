@@ -15,3 +15,7 @@ results*.jsonl
 /t.py
 .aissa-scoring-backup-*/
 .aissa-prompt-backup-*/
+
+# Local production configuration and secret; never commit these.
+/deploy/service.local.json
+/deploy/aissa.token
