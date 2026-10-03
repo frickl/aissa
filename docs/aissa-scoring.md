@@ -19,6 +19,10 @@ scoring. Low volume permits `sample_percent = 100`; conditions still apply.
 6. In scoring mode Lua polls `/verdict` every 0.25 seconds, using short HTTP
    requests. Poll timers belong to the current rspamd task. Its monotonic budget
    starts when the AISSA callback begins, including AISSA Redis/submission time.
+   Live waiting is also capped by the global `options.task_timeout` minus time
+   already spent in this scan and a one-second completion reserve. If that
+   budget is exhausted, AISSA does not submit another model job. If the outer
+   limit is unavailable, it reports `scan_budget_unavailable` without live waiting.
 7. A valid result arriving before the deadline inserts exactly one class symbol.
    rspamd combines its weight with existing rules and chooses its normal action.
    AISSA never directly forces accept/reject/greylist or modifies SMTP direction.
@@ -35,6 +39,7 @@ Keep the existing loader and configuration includes. Add to
 sample_percent = 100;
 scoring_enabled = true;
 score_wait_seconds = 10;
+scan_finish_reserve_seconds = 1;
 .include "$LOCAL_CONFDIR/local.d/aissa-scores.conf"
 ```
 
@@ -79,14 +84,18 @@ remain zero. Model results can contribute to rejection together with other rules
 
 ## Timeouts and activation
 
-A 10-second AISSA wait needs a larger *overall* rspamd task timeout to leave room
-for preceding filters. Check actual scanner, proxy self-scan and controller
-configuration; commonly used defaults are only 8 seconds. Set `task_timeout =
-20s;` in the applicable worker's local configuration before enabling the 10-second
-wait. Typical files are `local.d/worker-normal.inc`,
-`local.d/worker-proxy.inc` (self-scan), and `local.d/worker-controller.inc` (rspamc).
-Keep client/MTA deadlines above the overall scan timeout. Raising only the
-rspamc client timeout does not raise the worker's task timeout.
+A 10-second AISSA wait requires room for preceding filters and scan completion.
+The global scan limit is configured in `local.d/options.inc` as `task_timeout`;
+it is distinct from the proxy's connection I/O `timeout`. AISSA caps its live
+budget against that global limit, reserving `scan_finish_reserve_seconds`
+(default 1, allowed 0.1–5). For example, with 4.324 seconds already spent and a
+30-second scan limit, a requested 30-second AISSA wait is shortened to about
+24.676 seconds and ends by scan second 29. Per-worker or per-task lower limits
+are not discovered by this cap; verify these separately. Event-loop stalls and
+other filters are not controlled by AISSA, so this is not a hard SMTP deadline.
+Keep client/MTA deadlines above the overall scan timeout. Do not reactivate on
+production based only on unit tests: test a pending verdict through the actual
+installed rspamd and verify scan completion, History and SMTP acknowledgement.
 
 The bridge's existing `llm_timeout` is independent: it limits a background Ollama
 request, not the live SMTP wait. A slow 60-second inference may still yield
@@ -152,3 +161,23 @@ both bridge service JSON and Lua configuration; preserve its permissions. Countr
 metadata remains rspamd's supplied mempool country, not a promise of exact GeoIP.
 Mail text is treated as untrusted model input; this is not proof against prompt
 injection. No external LLM service is used by this integration.
+
+## Isolated real-rspamd regression test
+
+`tests/integration_rspamd_budget.py` starts temporary loopback listeners, an
+isolated Redis, real rspamd and a fake bridge that always replies `pending`.
+It never loads the production configuration or contacts production Redis/Ollama.
+It requires a runtime root containing extracted rspamd/Redis packages and their
+shared-library dependencies (Linux, not native Windows):
+
+```bash
+python3 tests/integration_rspamd_budget.py --runtime-root /path/to/runtime
+```
+
+The test runs both the normal scanner and proxy HTTP self-scan with a 4.324-second
+prefilter and an 8-second total limit. A requested 10-second AISSA wait must end
+near scan second 7 with `AISSA_STATUS[score_timeout]`; a requested 2-second wait
+ends near second 6.324. Both must avoid the outer scan timeout. On official
+rspamd 4.2.1, the former code hit the 8-second limit with no AISSA status; the
+fix produced `score_timeout` near 7 seconds in both workers. This verifies real
+timer/HTTP/Redis behaviour, but not SMTP or production History integration.

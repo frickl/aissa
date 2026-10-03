@@ -35,6 +35,11 @@ assert(cfg.scoring_enabled == nil or type(cfg.scoring_enabled) == 'boolean',
 local wait_seconds = tonumber(cfg.score_wait_seconds or 10)
 assert(wait_seconds and wait_seconds >= 1 and wait_seconds <= 30,
        'invalid score_wait_seconds (1..30)')
+local scan_options = rspamd_config:get_all_opt('options') or {}
+local scan_timeout = tonumber(scan_options.task_timeout)
+local finish_reserve = tonumber(cfg.scan_finish_reserve_seconds or 1)
+assert(finish_reserve and finish_reserve >= 0.1 and finish_reserve <= 5,
+       'invalid scan_finish_reserve_seconds (0.1..5)')
 local weights = cfg.scores or {}
 assert(type(weights) == 'table', 'invalid aissa scores')
 local defaults = {phishing=3, spam=1, bulk=0, ham=0, uncertain=0}
@@ -234,7 +239,21 @@ return 1
 ]]
 
 local function scan(task)
-  local deadline = util.get_ticks() + wait_seconds
+  local budget = wait_seconds
+  if scoring then
+    -- get_timeval(true) is the scan's wall-clock start, not this postfilter's
+    -- start. Convert remaining time once, then use monotonic ticks for polling.
+    -- Unknown outer limits must not permit an unbounded live wait.
+    local task_start = task:get_timeval(true)
+    if not scan_timeout or scan_timeout <= 0 or type(task_start) ~= 'number' then
+      mark(task, 'scan_budget_unavailable')
+      return
+    end
+    local elapsed = math.max(0, util.get_time() - task_start)
+    budget = math.min(budget, scan_timeout - elapsed - finish_reserve)
+    if budget <= 0 then mark(task, 'score_timeout'); return end
+  end
+  local deadline = util.get_ticks() + budget
   local ip = task:get_from_ip()
   local country = task:get_mempool():get_variable('country', 'string') or ''
   local qid = task:get_queue_id() or ''
@@ -276,6 +295,9 @@ local function scan(task)
     if not conditions(task, meta.country, counts) then mark(task, 'criteria'); return end
     if math.random()*100 >= percent then mark(task, 'sample'); return end
     if task:get_size() > size_limit then mark(task, 'size'); return end
+    if scoring and util.get_ticks() >= deadline then
+      mark(task, 'score_timeout'); return
+    end
 
     local started = http.request({
       task = task, url = endpoint .. '/submit', method = 'POST',

@@ -1,10 +1,13 @@
 -- Contract tests with a deterministic event loop; not a substitute for rspamadm.
 local function run(opts)
-  local now, events, marks, registered, payload = 0, {}, {}, {}, nil
+  local now, events, marks, registered, payload = opts.preceding or 0, {}, {}, {}, nil
+  local outer_timeout = opts.outer_timeout or 8
+  local async_timers = 0
   local attempts = 0
   local cfg = {
     enabled=true, scoring_enabled=opts.scoring ~= false, sample_percent=100,
     score_wait_seconds=opts.wait or 1, scores={phishing=3, spam=1, ham=0},
+    scan_finish_reserve_seconds=opts.reserve,
   }
   local function schedule(delay, fn) events[#events+1]={at=now+delay,fn=fn} end
   local http = {}
@@ -27,6 +30,7 @@ local function run(opts)
   end
   package.loaded.rspamd_http = http
   package.loaded.rspamd_util = {get_ticks=function() return now end,
+    get_time=function() return 1700000000 + now end,
     encode_base64=function(value) return value end}
   package.loaded.rspamd_logger = {infox=function() end, warnx=function() end}
   package.loaded.ucl = {to_json=function() return '{}' end,
@@ -42,7 +46,12 @@ local function run(opts)
     end,
   }
   rspamd_config = {
-    get_all_opt=function() return cfg end,
+    get_all_opt=function(_, section)
+      if section == 'options' then
+        return {task_timeout=not opts.missing_scan_timeout and outer_timeout or nil}
+      end
+      return cfg
+    end,
     add_on_load=function() end,
     register_symbol=function(_, symbol)
       registered[symbol.name]=symbol
@@ -55,6 +64,7 @@ local function run(opts)
   io.open=real_open
   assert(ok, err)
   local task = {
+    get_timeval=function(_,raw) assert(raw == true); return 1700000000 end,
     get_from_ip=function() return nil end,
     get_mempool=function() return {get_variable=function() return nil end} end,
     get_queue_id=function() return 'qid' end,
@@ -66,7 +76,16 @@ local function run(opts)
     insert_result=function(_,symbol,weight,option)
       marks[#marks+1]={symbol=symbol,points=weight*registered[symbol].score,option=option}
     end,
-    add_timer=function(_,delay,cb) schedule(delay,cb) end,
+    add_timer=function(_,delay,cb)
+      async_timers=async_timers+1
+      schedule(delay,function()
+        -- Non-numeric callback results retire rspamd task timers. A new HTTP
+        -- request may be scheduled by the callback before the timer is retired.
+        local result=cb(task)
+        assert(type(result) ~= 'number', 'Unexpected repeating task timer')
+        async_timers=async_timers-1
+      end)
+    end,
   }
   registered.AISSA_OBSERVE.callback(task)
   local n=0
@@ -74,10 +93,12 @@ local function run(opts)
     table.sort(events,function(a,b) return a.at < b.at end)
     local event=table.remove(events,1)
     now=event.at
+    assert(now < outer_timeout, 'Outer scan timeout reached with AISSA still pending')
     event.fn()
     n=n+1
     assert(n<200, 'Unbounded polling')
   end
+  assert(async_timers == 0, 'Task timer left pending')
   local total, status, class=0,nil,nil
   for _,mark in ipairs(marks) do
     total=total+mark.points
@@ -117,3 +138,14 @@ p,s,c=run({submit_code=429})
 assert(p==0 and s=='capacity' and c==nil)
 p,s,c=run({submit_code=200})
 assert(p==3 and s=='scored' and c=='AISSA_PHISHING')
+
+-- Production regression: 4.324 seconds of preceding rules, 30-second AISSA
+-- wait and 30-second total scan limit. Finish by 29, with no timer remaining.
+p,s,c,elapsed,attempts=run({preceding=4.324,wait=30,outer_timeout=30,pending_forever=true})
+assert(p==0 and s=='score_timeout' and c==nil and elapsed<=29.001)
+p,s,c,elapsed=run({preceding=7.5,outer_timeout=8,pending_forever=true})
+assert(p==0 and s=='score_timeout' and c==nil and elapsed==7.5)
+p,s,c,elapsed,attempts=run({missing_scan_timeout=true})
+assert(p==0 and s=='scan_budget_unavailable' and attempts==0)
+p,s,c,elapsed=run({preceding=4.324,wait=30,outer_timeout=30,pending_once=true})
+assert(p==3 and s=='scored' and c=='AISSA_PHISHING' and elapsed<5)
