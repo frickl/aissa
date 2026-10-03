@@ -1,4 +1,6 @@
+import base64
 import json
+from email.message import EmailMessage
 import unittest
 from unittest.mock import patch, MagicMock
 from aissa.analyzer import extract, validate, classify, MAX_MAIL
@@ -15,6 +17,47 @@ class AnalyzerTests(unittest.TestCase):
     def test_attachment_excluded(self):
         raw = b'Content-Type: text/plain\nContent-Disposition: attachment\n\nprivate attachment'
         self.assertEqual(extract(raw)['text'], '')
+
+    def test_base64_utf8_plain_text_decodes_before_truncation(self):
+        text = 'Grüße, unser Treffen ist morgen. ' * 50
+        raw = (b'Content-Type: text/plain; charset=utf-8\r\n'
+               b'Content-Transfer-Encoding: base64\r\n\r\n'
+               + base64.encodebytes(text.encode('utf-8')))
+        result = extract(raw, 1000)
+        self.assertEqual(result['text'], text[:1000])
+        self.assertTrue(result['text_truncated'])
+
+    def test_quoted_printable_utf8_decodes(self):
+        raw = (b'Content-Type: text/plain; charset=utf-8\r\n'
+               b'Content-Transfer-Encoding: quoted-printable\r\n\r\n'
+               b'Gr=C3=BC=C3=9Fe, morgen um 14 Uhr.')
+        self.assertEqual(extract(raw)['text'], 'Grüße, morgen um 14 Uhr.')
+
+    def test_base64_html_decodes_before_visible_text_and_links(self):
+        html = '<p>Grüße</p><script>hidden</script><a href="https://example.org/">Termin</a>'
+        raw = (b'Content-Type: text/html; charset=utf-8\r\n'
+               b'Content-Transfer-Encoding: base64\r\n\r\n'
+               + base64.encodebytes(html.encode('utf-8')))
+        result = extract(raw)
+        self.assertIn('Grüße', result['text'])
+        self.assertIn('Termin', result['text'])
+        self.assertNotIn('hidden', result['text'])
+        self.assertEqual(result['urls'], ['https://example.org/'])
+
+    def test_multipart_base64_attachment_stays_out_of_model_input(self):
+        msg = EmailMessage()
+        msg.set_content('Hallo, unser Treffen ist morgen.', cte='base64')
+        msg.add_attachment(b'PK\x03\x04not a real archive', maintype='application',
+                           subtype='zip', filename='test.zip', cte='base64')
+        sample = extract(msg.as_bytes())
+        self.assertEqual(sample['text'].strip(), 'Hallo, unser Treffen ist morgen.')
+        self.assertNotIn('PK', sample['text'])
+        self.assertNotIn('UEsD', sample['text'])
+
+    def test_undeclared_base64_is_not_silently_decoded(self):
+        body = base64.b64encode(b'PK\x03\x04test')
+        sample = extract(b'Subject: test\r\n\r\n' + body)
+        self.assertEqual(sample['text'], body.decode('ascii'))
 
     def test_bounds(self):
         with self.assertRaises(ValueError):
