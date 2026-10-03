@@ -63,13 +63,19 @@ class Bridge(Engine):
     def process(self, raw, meta):
         result = {"id": uuid.uuid4().hex, "meta": meta}
         try:
-            verdict = classify(raw, self.cfg["model"], self.cfg["llm_timeout"])
+            verdict = classify(raw, self.cfg["model"], self.cfg["llm_timeout"],
+                               self.cfg.get("max_text_chars", 1000))
             result.update({
                 "status": "ok", "classification": verdict["classification"],
                 "confidence": verdict["confidence"],
                 "elapsed_seconds": verdict["elapsed_seconds"],
                 "model": verdict["model"],
             })
+            for key in ("input_text_chars", "text_truncated", "load_duration_seconds",
+                        "prompt_eval_duration_seconds", "eval_duration_seconds",
+                        "prompt_eval_count", "eval_count"):
+                if key in verdict:
+                    result[key] = verdict[key]
             self.count("completed")
         except Exception as exc:
             result.update({"status": "error", "classification": "uncertain",
@@ -190,6 +196,9 @@ def main():
                        ("max_results", 10000), ("llm_timeout", 300)]:
         if type(cfg.get(key)) is not int or not 1 <= cfg[key] <= upper:
             raise ValueError("Invalid " + key)
+    max_text = cfg.get("max_text_chars", 1000)
+    if type(max_text) is not int or not 100 <= max_text <= 4000:
+        raise ValueError("Invalid max_text_chars (100..4000)")
     token = Path(cfg["token_file"]).read_text().strip()
     if len(token) < 32:
         raise ValueError("Invalid AISSA API token")

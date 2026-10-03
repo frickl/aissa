@@ -35,6 +35,20 @@ class BridgeScoringTests(unittest.TestCase):
         self.assertEqual(self.engine.verdict(self.meta['event_id'])['classification'], 'phishing')
         self.assertNotIn('meta', self.engine.verdict(self.meta['event_id']))
 
+    def test_text_budget_and_safe_metrics_reach_result(self):
+        self.engine.cfg['max_text_chars'] = 800
+        verdict = dict(classification='ham', confidence=.5, elapsed_seconds=2,
+                       model='test', input_text_chars=800, text_truncated=True,
+                       prompt_eval_duration_seconds=1.5, reason='private text')
+        with patch('aissa.bridge.classify', return_value=verdict) as backend, contextlib.redirect_stdout(io.StringIO()):
+            self.engine.process(b'mail', self.meta)
+        backend.assert_called_once_with(b'mail', 'test', 60, 800)
+        result = self.engine.verdict(self.meta['event_id'])
+        self.assertEqual(result['input_text_chars'], 800)
+        self.assertTrue(result['text_truncated'])
+        self.assertEqual(result['prompt_eval_duration_seconds'], 1.5)
+        self.assertNotIn('reason', result)
+
     def test_error_never_becomes_ham(self):
         self.engine.submit(b'mail', self.meta)
         with patch('aissa.bridge.classify', side_effect=TimeoutError), contextlib.redirect_stdout(io.StringIO()):

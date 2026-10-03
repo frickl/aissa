@@ -8,7 +8,7 @@ from email.parser import BytesParser
 from html.parser import HTMLParser
 
 MAX_MAIL = 2 * 1024 * 1024
-MAX_TEXT = 4000
+MAX_TEXT = 1000
 CLASSES = ["ham", "bulk", "spam", "phishing", "uncertain"]
 SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -44,7 +44,11 @@ class VisibleHTML(HTMLParser):
             self.text.append(data)
 
 
-def extract(raw):
+def extract(raw, max_text=None):
+    if max_text is None:
+        max_text = MAX_TEXT
+    if type(max_text) is not int or not 100 <= max_text <= 4000:
+        raise ValueError("Invalid max_text_chars (100..4000)")
     if len(raw) > MAX_MAIL:
         raise ValueError("Mail exceeds 2 MiB limit")
     msg = BytesParser(policy=policy.default).parsebytes(raw)
@@ -67,8 +71,8 @@ def extract(raw):
     return {
         "subject": str(msg.get("Subject", ""))[:200],
         "displayed_from": str(msg.get("From", ""))[:200],
-        "text": text[:MAX_TEXT],
-        "text_truncated": len(text) > MAX_TEXT,
+        "text": text[:max_text],
+        "text_truncated": len(text) > max_text,
         "urls": [url[:300] for url in list(dict.fromkeys(links))[:12]],
         "limitations": "Attachments, images and verified authentication not analyzed; displayed From is untrusted.",
     }
@@ -87,8 +91,8 @@ def validate(value):
     return value
 
 
-def classify(raw, model="qwen2.5:1.5b", timeout=60):
-    sample = extract(raw)
+def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None):
+    sample = extract(raw, max_text_chars)
     payload = {
         "model": model, "stream": False, "format": SCHEMA,
         "messages": [{"role": "system", "content": SYSTEM},
@@ -113,5 +117,14 @@ def classify(raw, model="qwen2.5:1.5b", timeout=60):
     if result.get("done") is not True or result.get("done_reason") == "length":
         raise ValueError("Incomplete backend response")
     verdict = validate(json.loads(result["message"]["content"]))
-    return {**verdict, "model": model, "elapsed_seconds": round(time.monotonic() - started, 3),
+    timings = {}
+    for key in ("load_duration", "prompt_eval_duration", "eval_duration"):
+        value = result.get(key)
+        if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+            timings[key + "_seconds"] = round(value / 1e9, 3)
+    for key in ("prompt_eval_count", "eval_count"):
+        value = result.get(key)
+        if type(value) is int and value >= 0:
+            timings[key] = value
+    return {**verdict, **timings, "input_text_chars": len(sample["text"]), "model": model, "elapsed_seconds": round(time.monotonic() - started, 3),
             "text_truncated": sample["text_truncated"], "mode": "observe"}

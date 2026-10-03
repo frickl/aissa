@@ -83,7 +83,8 @@ class Engine:
         while True:
             raw, meta = self.jobs.get()
             try:
-                verdict = classify(raw, self.cfg['model'], self.cfg['llm_timeout'])
+                verdict = classify(raw, self.cfg['model'], self.cfg['llm_timeout'],
+                                   self.cfg.get('max_text_chars', 1000))
                 self.count('completed')
                 if verdict['classification'] in ('spam', 'phishing'):
                     try:
@@ -175,6 +176,9 @@ def main():
     for key, upper in [('max_pending', 100), ('max_requests_per_minute', 10000), ('llm_timeout', 300)]:
         if type(cfg.get(key)) is not int or not 1 <= cfg[key] <= upper:
             raise ValueError('Invalid '+key)
+    max_text = cfg.get("max_text_chars", 1000)
+    if type(max_text) is not int or not 100 <= max_text <= 4000:
+        raise ValueError("Invalid max_text_chars (100..4000)")
     token = Path(cfg['token_file']).read_text().strip()
     if len(token) < 32:
         raise ValueError('Use a token of at least 32 characters')

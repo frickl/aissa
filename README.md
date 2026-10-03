@@ -214,10 +214,17 @@ loses queued messages and unacknowledged results.
 
 ## Content limits and privacy
 
-Raw MIME is limited to 2 MiB, extracted body to 4000 characters, and URLs to
+Raw MIME is limited to 2 MiB, extracted body to 1000 characters by default, and URLs to
 12 x 300 characters. Attachments are not analyzed. Full MIME temporarily exists
 in memory; only extracted content is sent to the local model.
-HTML extraction is basic. Truncation can hide attacks.
+`max_text_chars` in the service configuration accepts 100–4000 characters.
+The default 1000 is a provisional CPU latency budget, not a guarantee that
+inference finishes within the SMTP wait. Truncation can hide attacks; validate
+quality on representative mail before increasing enforcement.
+Bridge results include input length, truncation and available Ollama token
+counts and load/prompt/generation timings, without mail text or model reason.
+HTML extraction is basic. A stricter prompt forbids claims of virus/attachment
+inspection, but cannot guarantee that the model will follow that instruction.
 No URL is fetched. Prompt injection remains a model-quality risk.
 
 Redis contains identity-related counters, not mail bodies.
