@@ -1,368 +1,146 @@
 # AISSA — AI Sample Spam Analyzer
 
-Experimental, locally operated multilingual email analysis for rspamd.
-Maintainer: Gunther Nitzsche (`frickl`). MIT licensed.
-If this helps you and we meet, buy me a beer.
+Experimental LLM-assisted email analysis for **Rspamd and Postfix**. AISSA selects
+messages using existing filter signals, analyzes their content with a local
+Ollama model, and can add configurable points while respecting the remaining
+Rspamd scan budget.
 
-## Status
+**The integration works; classifier reliability is still under evaluation.**
+The tested Qwen 2.5 1.5B model has missed real scam mail and produced false
+positives and invented explanations. Start in observation mode. Unit tests
+verify the integration, not the quality of model judgments.
 
-Version 0.3 is an observation prototype, not an enforcement filter.
-The Qwen 1.5B smoke test already produced a false positive on legitimate French
-correspondence. Model confidence is not a calibrated probability.
+[Source](https://github.com/frickl/aissa) ·
+[Installation](docs/installation.md) ·
+[Field notes](docs/field-notes.md) ·
+[Evaluation](docs/aissa-evaluation.md) ·
+[MIT license](LICENSE)
 
-Both MX and Submission are supported without a direction filter. Existing
-rspamd/MTA settings must actually scan both paths. No account locking, SMTP
-rejection, Bayes training, virus scanning, OCR or campaign similarity is added.
+## Why this exists
 
-This version moves active Redis operations to rspamd Lua. Python does not read
-Redis passwords or connect to Redis. The legacy state.py and service.py helpers
-remain for compatibility/tests; start the new aissa.bridge entry point.
+Authenticating a sender does not establish that a message is legitimate. Scam
+mail can pass SPF, DKIM and DMARC, while a legitimate forwarded message can fail
+some checks. AISSA explores whether content analysis can provide useful
+additional evidence without sending every message through an LLM or leaving
+SMTP waiting indefinitely.
 
-## Who checks what
+This is a project for mail administrators who want to measure that trade-off:
+missed abuse, false positives, CPU cost and time spent waiting for a verdict.
 
-| Component | Responsibility |
+## What is implemented
+
+- Rspamd Lua selection by score range, symbols, URLs, supplied country metadata,
+  account/IP counters and separate AI-suspicion/confirmed-abuse counters.
+- Sampling and raw-message size limits after selection.
+- An authenticated loopback Python bridge with admission, queue and result limits.
+- Bounded MIME text extraction, local Ollama classification and validated JSON.
+- Observation mode and optional live scoring with configurable class weights.
+- Live waiting capped against the global Rspamd task timeout, with a completion
+  reserve; errors and timeouts add status information rather than a ham verdict.
+- Independent result collection and deduplicated Redis updates through Rspamd's
+  existing Redis configuration.
+
+Both incoming MX and Submission scans can use the integration. Your existing
+MTA/Rspamd settings must actually invoke it on each path.
+
+## Processing flow
+
+```mermaid
+flowchart TD
+  A[Existing Rspamd checks] --> B{AISSA selection}
+  B -->|Skip| E[Normal Rspamd action]
+  B -->|Select| C[Local Python bridge and Ollama]
+  C --> D{Timely live verdict?}
+  D -->|Yes| F[Add configured class points]
+  D -->|No or observation mode| E
+  F --> E
+  C --> G[Controller collects results into Redis]
+```
+
+AISSA does not directly force reject, greylist, acceptance or account suspension.
+In live scoring mode, its points can affect the action chosen by existing
+Rspamd rules. After an SMTP transaction finishes, a later model result cannot
+retroactively reject that message.
+
+## What the measurements show
+
+During manual testing on a CPU-only server with Qwen 2.5 1.5B:
+
+| Case | Observed result |
 |---|---|
-| MTA | Supplies trusted connection IP and authenticated account, if available |
-| Existing rspamd modules | Existing spam, URL and authentication checks and SMTP actions |
-| AISSA Lua postfilter | Counts scans, reads reputation, applies selection and sampling |
-| Local Python bridge | Enforces queue/rate/result limits; accepts selected raw MIME |
-| Python analyzer | Extracts bounded text/URLs and validates model JSON |
-| Local Ollama model | Classifies message content; no tools or link fetching |
-| rspamd controller Lua | Collects results, writes reputation to Redis, acknowledges results |
-| Operator | Independently confirms abuse through the explicit confirmation command |
+| Explicit demand for a password and current 2FA code | Classified as phishing; live points contributed to rejection |
+| Ordinary meeting arrangement | Classified as ham; no additional points |
+| Real donation offer directing replies to an unrelated Gmail address | Classified as ham with confidence 1.0; missed suspicious content |
+| Long undeclared Base64 body | Slow inference; some outputs invented links or virus evidence |
 
-The model receives extracted message content, not verified account history.
-Account/IP metadata is used for counting and selection in Lua.
-Displayed From is never used as an authenticated account identity.
+A short cold phishing request took about **15 seconds**; a warm repeat took
+about **2.5 seconds**. A changed meeting message took **4.2 seconds**, reusing
+456 of 536 input tokens. These are individual observations, not accuracy or
+throughput benchmarks. See [field notes](docs/field-notes.md) for context.
 
-## Data flow
+The donation mail also exposed a separate selection limitation: its negative
+Rspamd score kept it outside the configured 3-to-under-15 range. Selecting it
+would not have fixed the incorrect model verdict. Selection, classification and
+score impact must each be evaluated.
 
-1. Lua obtains account/IP from trusted MTA metadata.
-2. An atomic Redis script increments fixed-window counters and reads reputation.
-3. Configured conditions, random sampling and size limits select messages.
-4. Only selected full MIME is sent over authenticated loopback HTTP.
-5. A single worker analyzes messages; SMTP does not wait for inference.
-6. Results remain in RAM until rspamd confirms successful Redis processing.
-7. Redis deduplication prevents repeated collection from increasing reputation.
+## Try it safely
 
-The controller polls independently of new mail. A controller worker must be
-running and load the AISSA Lua configuration. Collection by multiple controllers
-is safe because result application is idempotent.
-
-RAM queues and unacknowledged results are lost on Python restart. There is no
-disk spool or durable delivery guarantee. While the service remains running,
-a Redis outage retains completed results. Once result capacity is exhausted,
-new samples are refused instead of deleting older results.
-
-## Configuration
-
-Selection: /etc/rspamd/local.d/aissa.conf.
-Service: /opt/aissa/deploy/service.local.json (untracked).
-Python API token: /opt/aissa/deploy/aissa.token (untracked).
-Rspamd API token: /etc/rspamd/local.d/aissa.token (same secret).
-
-Sampling applies after conditions:
-* 100: every eligible message, subject to capacity.
-* 0.2: about one in 500 eligible messages.
-* 0: count metadata but submit no message content.
-
-Conditions use all (AND) or any (OR). No conditions means all mail is eligible.
-Available criteria: URL presence, rspamd score/symbols, country exclusion,
-account/IP fixed-window counts, AI suspicion and independently confirmed events.
-
-Country currently means the ASN owner's country reported by rspamd, not reliable
-client GeoIP location. Unknown-country behavior is explicitly configurable.
-
-Account keys use the exact authenticated ID. IP must be correct through the
-Postfix/HAProxy chain. Header From/Received values are not identity sources.
-node_id must distinguish independent MTAs sharing the same Redis namespace.
-
-## Redis and reputation
-
-lua_redis parses the effective rspamd Redis configuration, including credentials
-and server configuration. No grepping, password copying or Python AUTH is needed.
-AISSA uses the inherited Redis DB with the new aissa:v2: namespace.
-
-Only AISSA's parameter copy gets redis_timeout=0.2 seconds and expand_keys=false:
-its keys are built explicitly. Existing rspamd modules keep their own settings.
-Writes and atomic snapshots use the configured write server. Read replicas are
-not used for these read-modify-write operations.
-
-This PoC routes all AISSA scripts through one shard key. It targets one logical
-Redis writer and does not claim native Redis Cluster compatibility or automatic
-cluster-wide scaling. Multi-key scripts require appropriate EVAL permissions.
-
-Identity components are Base64-encoded, NOT anonymized. Protect Redis accordingly.
-
-Counters:
-* Aligned 60/600/3600-second buckets, TTL twice the bucket length.
-* Counts are scan attempts, not accepted or delivered messages.
-* These are fixed buckets, not rolling windows.
-* Observation dedup: node ID + queue ID + message digest, TTL 48 hours.
-* Without queue ID, identical content on the same node can collapse.
-
-Reputation:
-* ai_checked: successful model classifications.
-* ai_suspect: spam/phishing model classifications.
-* confirmed: explicit independent operator confirmation only.
-* Daily buckets expire after 48 hours; selection reads today and yesterday.
-* This is coarse expiration, not exponential decay or a calibrated risk score.
-* AI and confirmed result dedup keys are separate, with 48-hour TTL.
-* Delayed results are assigned to their completion day, not collection day.
-* Errors never count as ham or confirmed abuse.
-
-## Service setup on Debian 12
-
-Assumptions: /opt/aissa, Python 3.11, existing rspamd and local Ollama.
-No additional Python dependencies are required.
-
-As root, create the service user and local token once:
-
-```bash
-getent group _rspamd
-id aissa || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin aissa
-test -f /opt/aissa/deploy/aissa.token || python3 -c 'import secrets; print(secrets.token_hex(32))' > /opt/aissa/deploy/aissa.token
-chown root:aissa /opt/aissa/deploy/aissa.token
-chmod 0640 /opt/aissa/deploy/aissa.token
-install -m 0640 -o root -g _rspamd /opt/aissa/deploy/aissa.token /etc/rspamd/local.d/aissa.token
-
-```
-
-Copy the example service configuration, preserving intentional local changes:
-
-```bash
-test -f deploy/service.local.json || install -m 0640 -o root -g aissa deploy/service.json deploy/service.local.json
-install -m 0644 deploy/aissa.service /etc/systemd/system/aissa.service
-systemctl daemon-reload
-systemctl enable --now aissa
-systemctl status aissa --no-pager
-```
-
-Defaults: 20 queued messages, one worker, 10 admissions per fixed minute,
-1000 outstanding jobs/results. MemoryMax applies to Python, not Ollama.
-Ollama must remain on 127.0.0.1:11434.
-
-## rspamd setup
-
-Copy rspamd/aissa.lua to /etc/rspamd/local.d/aissa.lua. Merge the example configuration
-into /etc/rspamd/local.d/aissa.conf, preserving your selected criteria.
-
-Merge once into /etc/rspamd/rspamd.conf.local:
-
-```ucl
-aissa {
-  .include "$LOCAL_CONFDIR/local.d/aissa.conf"
-}
-```
-
-Merge once into /etc/rspamd/rspamd.local.lua:
-
-```lua
-dofile('/etc/rspamd/aissa.lua')
-```
-
-Check configuration before reloading:
-
-```bash
-rspamadm configtest
-# Only after a successful configuration test:
-systemctl reload rspamd
-journalctl -u aissa -n 30 --no-pager
-```
-
-A controller worker must load the module for result collection.
-For a controlled synthetic test, temporarily set sample_percent=100,
-leave conditions unset, then configtest/reload:
-
-```bash
-rspamc < samples/phish-fr.eml
-journalctl -u aissa -n 20 --no-pager
-```
-
-Expect AISSA_STATUS(queued), followed by a Python result.
-Restore the intended sampling afterwards.
-
-## Operator confirmation
-
-Only use for independently established abuse:
-
-```bash
-python3 -m aissa.reputation account ACCOUNT_ID --event-id incident-unique-id
-```
-
-This uses the local API token, not Redis credentials. The controller records
-the event in the confirmed lane. No account is disabled. Reusing an event ID
-within the deduplication period does not add another event.
-Identity arguments can appear in shell history.
-
-## API and diagnostics
-
-All endpoints require Authorization: Bearer <local token>.
-
-* POST /submit: raw MIME; Base64 JSON metadata in X-Aissa-Meta.
-* GET /results: up to eight completed, unacknowledged results.
-* POST /ack: {"ids": ["result-id"]}.
-* POST /confirm: operator metadata including identity and event_id.
-* GET /metrics: counters, pending queue/results and outstanding capacity.
-
-Redis and HTTP acknowledgements add a bounded wait to the rspamd scan.
-Inference runs asynchronously and cannot change a completed SMTP decision.
-AISSA_STATUS has zero weight. Redis/service errors do not override existing
-rspamd actions. Results remain in RAM until acknowledged; restarting Python
-loses queued messages and unacknowledged results.
-
-## Content limits and privacy
-
-Raw MIME is limited to 2 MiB, extracted body to 1000 characters by default, and URLs to
-12 x 300 characters. Attachments are not analyzed. Full MIME temporarily exists
-in memory; only extracted content is sent to the local model.
-`max_text_chars` in the service configuration accepts 100–4000 characters.
-The default 1000 is a provisional CPU latency budget, not a guarantee that
-inference finishes within the SMTP wait. Truncation can hide attacks; validate
-quality on representative mail before increasing enforcement.
-`keep_alive_seconds` controls how long Ollama retains the model after each
-request (0–86400 seconds, default 1800 = 30 minutes; 0 unloads immediately).
-This improves the opportunity for prompt-prefix reuse, but does not guarantee
-cache hits or prewarm the model at service start. All requests remain independent;
-previous mails are not appended as chat history. Model and context memory stay
-resident longer.
-Bridge results include input length, truncation and available Ollama token
-counts (including `prompt_eval_cached_count` when provided) and load/prompt/generation timings, without mail text or model reason.
-HTML extraction is basic. A stricter prompt forbids claims of virus/attachment
-inspection, but cannot guarantee that the model will follow that instruction.
-No URL is fetched. Prompt injection remains a model-quality risk.
-
-Redis contains identity-related counters, not mail bodies.
-Journal entries omit account/IP, body and model explanation.
-CLI output does include explanations and may contain sensitive text.
-Protect the API token and Redis. Swap, core dumps, Ollama logging and journal
-retention remain operator-controlled.
-
-## Verification
+Requirements: an existing Rspamd/Redis installation, Python 3.11 or newer and
+local Ollama. The Python code has no additional package dependencies.
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m aissa samples/phish-fr.eml
 ```
 
-Tests cover retained results, acknowledgements, capacity, error results,
-operator confirmation and existing extraction/validation behavior.
-They do not certify live Redis or rspamd compatibility.
+The CLI calls Ollama directly and prints its explanation. For MTA integration,
+follow [installation](docs/installation.md), start with
+`scoring_enabled = false`, and verify the effective configuration and real SMTP
+responses. The repository example configuration requires review before use; it
+contains duplicate `enabled` entries and enables live scoring. Do not copy it
+blindly into production.
 
-This update was generated without a working execution environment.
-Local tests, rspamadm configtest and a synthetic end-to-end scan are required
-before observing real traffic. Known model false positives remain.
+## Limits that matter
 
-References:
-https://docs.rspamd.com/lua/lua_redis/
-https://docs.rspamd.com/lua/rspamd_config/
-https://docs.rspamd.com/lua/rspamd_http/
+- Confidence is an uncalibrated model self-assessment, not a probability of abuse.
+- Body extraction defaults to 1,000 characters; truncation may hide decisive text.
+- No attachment inspection, virus scanning, OCR, URL fetching or account locking.
+- Prompt instructions do not guarantee resistance to invented evidence or prompt
+  injection from hostile mail content.
+- Queue/results/cache are RAM-only and disappear on bridge restart.
+- Model processing can continue after the live scan budget expires.
+- The global scan-budget cap is not a hard deadline for the entire SMTP/Milter
+  chain; narrower task/worker limits and host stalls need separate validation.
 
+The currently implemented backend is **local Ollama**. OpenAI, Claude and
+DeepSeek adapters and comparative evaluations are proposed work, not existing
+features. Using an external backend would send selected mail content off-host.
 
-## Live scoring extension
+## Contribute
 
-See [AISSA live scoring](docs/aissa-scoring.md) for the current bridge/Lua
-flow, configurable points, bounded scan wait, Redis collection and limitations.
-This supersedes earlier observe-only integration instructions when enabled.
+Useful contributions include:
 
+- Independently labeled, privacy-reviewed mail cases, including legitimate
+  newsletters, multilingual correspondence and authenticated scam mail.
+- Model comparisons that report false positives and missed abuse alongside
+  latency, hardware, model tag and prompt version.
+- Integration results from other Rspamd versions and actual SMTP paths.
+- Queue expiration/cancellation, additional selection criteria and optional
+  API backends, with explicit timeout and data-handling behavior.
 
-## Classifier evaluation
+Open an [issue](https://github.com/frickl/aissa/issues) with a reproducible case
+or send a pull request. Do not publish private mail, credentials or personal
+addresses in issues or evaluation results. Discuss broader changes before
+implementation.
 
-See [classifier evaluation](docs/aissa-evaluation.md) for the prompt rubric,
-synthetic evaluation cases, expected labels, benchmark commands and limitations.
+## Documentation
 
-<!-- AISSA_FLOW_BEGIN -->
-## Processing order (rough pseudocode)
+- [Installation and operations](docs/installation.md)
+- [Architecture, Redis and reputation](docs/architecture.md)
+- [Live scoring and timeout behavior](docs/aissa-scoring.md)
+- [Classifier evaluation](docs/aissa-evaluation.md)
+- [Measured field notes](docs/field-notes.md)
+- [Static project page and deployment](website/README.md)
 
-This describes the current bridge/Lua integration. Configuration lives mainly in
-rspamd/local.d. Selection, model classification, live scoring and later reputation
-updates are separate steps. AISSA applies to both MX and Submission; it does not
-require a direction. An authenticated account is used when available, otherwise
-only the available IP identity is recorded.
-
-```text
-ON EACH MESSAGE (MX or Submission):
-  rspamd:
-    Run the normal enabled filters; compute existing symbols and score.
-    Invoke the AISSA Lua postfilter if enabled for this scan.
-
-  AISSA Lua + Redis:
-    Read account, connecting IP, country metadata, queue ID and message digest.
-    Record account/IP observations once per event; read reputation counters.
-    If Redis is unavailable: add zero-point status; stop AISSA for this scan.
-    Check configured conditions (country, URLs, score, symbols, reputation).
-    Apply random sampling and the message-size limit.
-    If not selected: add zero-point status; stop AISSA for this scan.
-
-  Python bridge (authenticated local HTTP API):
-    Reuse a fresh verdict or an already queued/running job for the same event.
-    Otherwise check result capacity, admission rate and queue capacity.
-    If full or rate-limited: refuse this job; Lua adds zero-point status.
-    If accepted: queue the message for the single model worker.
-
-  Python analyzer + local Ollama (background worker):
-    Extract bounded subject, displayed sender, text and URLs from MIME.
-    Exclude attachments; treat all mail content as untrusted evidence.
-    Ask the configured model for ham/bulk/spam/phishing/uncertain + confidence.
-    Validate JSON fields, class, confidence range and completion.
-    Keep success or error until the Redis collector acknowledges it.
-    Keep a separate short verdict cache for live scans and repeated scans.
-
-  AISSA Lua + rspamd (the current scan):
-    If scoring is disabled: finish immediately after submission.
-    Otherwise poll for a verdict within the configured AISSA wait budget.
-    Timely valid verdict: add its class symbol with the configured weight.
-    Error, unavailable verdict or expired budget: add zero-point status.
-    rspamd combines AISSA points with existing rules and chooses its action.
-    AISSA does not directly force accept, reject, greylist or account disabling.
-
-INDEPENDENTLY, EVERY COLLECTION INTERVAL:
-  rspamd controller Lua + Python bridge + Redis:
-    Fetch retained completed results, independently of incoming messages.
-    For success: update account/IP ai_checked once per event.
-    For spam/phishing: additionally update ai_suspect once per event.
-    For inference error: add no ham or abuse reputation credit.
-    For explicit operator confirmation only: update the separate confirmed lane.
-    If Redis writing fails: retain the result and retry on the next poll.
-    Acknowledge successfully applied or terminal-error rows to the bridge.
-```
-
-A late verdict can update reputation but cannot change an already finished mail
-scan. AI suspicion is not operator-confirmed abuse. Live points are configured
-in local.d/aissa-scores.conf; no additional reputation points are implemented.
-Redis passwords/connections are handled by rspamd's lua_redis configuration;
-Python does not read or copy the Redis password. Country uses rspamd's supplied
-metadata, not a guarantee of exact physical location.
-
-A 100% sample rate selects every message that passes the other gates; it does not
-bypass rate/queue limits or guarantee a timely score. The single worker's queue
-and model latency consume the live budget. The overall rspamd worker/client/MTA
-timeouts must leave enough time for the complete scan. Confidence is a model
-self-assessment, not a calibrated probability. Virus scanning is not part of
-AISSA; attachments are excluded from model analysis. Bridge queues/results/cache
-are in memory and are lost on restart. Acknowledgement does not delete the short
-live verdict cache; expired finished verdicts can be analyzed again under the
-normal admission limits, while Redis application remains deduplicated.
-
-See [live scoring](docs/aissa-scoring.md) and
-[classifier evaluation](docs/aissa-evaluation.md) for details and limitations.
-
-<!-- AISSA_FLOW_END -->
-
-### Migrating an existing /etc/aissa installation
-
-Preserve the installed service JSON values and token; do not overwrite them
-with deploy/service.json. Copy the token to /opt/aissa/deploy/aissa.token,
-change only token_file in the copied JSON, and install it as
-/opt/aissa/deploy/service.local.json. Both files should be root:aissa mode 0640.
-Keep the existing matching Rspamd token in /etc/rspamd/local.d/aissa.token.
-Use a systemd drop-in to clear the old ExecStart and replace it with:
-
-```
-ExecStart=/usr/bin/python3 -m aissa.bridge --config /opt/aissa/deploy/service.local.json
-```
-
-Run daemon-reload and restart aissa. Verify the new command, service status,
-listener on 127.0.0.1:8765 and a successful authenticated submission before
-removing the old files. Restarting loses RAM jobs/results; choose an idle moment.
-Existing systemd hardening and local overrides should remain in effect.
+Maintained by **Gunther Nitzsche** (`frickl`). MIT licensed.
+If this helps you and we meet, buy me a beer.

@@ -1,11 +1,10 @@
 # AISSA prompt and classifier evaluation
 
-Prompt version: 2026-10-02.1, in `aissa/prompt.py`. The analyzer imports its SYSTEM
-text; its MIME extraction, confidence validation, Ollama options and public API
-remain as deployed. The installer replaces only a top-level SYSTEM assignment,
-preserving local fixes in analyzer.py. The previously deployed SYSTEM text is
-saved once to `evaluation/previous_prompt.txt` for comparison. It is preserved
-when the installer is run again.
+Prompt version: 2026-10-03.1, in `aissa/prompt.py`. The analyzer imports
+its SYSTEM text. Run offline comparisons with the same model, extraction limits
+and runtime settings. If comparing an older prompt, preserve it explicitly in
+`evaluation/previous_prompt.txt`; that local file is not guaranteed to exist in
+a fresh checkout.
 
 ## Rubric
 
@@ -25,8 +24,7 @@ These instructions are not evidence that the model will reliably follow them.
 
 The prompt contains two short English illustrations of legitimate delivery and
 password theft. It is longer than the original; compare inference time as well
-as classifications. Existing live scan budget and weights are not adjusted by
-this installer.
+as classifications. Changing the prompt does not adjust live scan budgets or weights.
 
 ## Evaluation cases
 
@@ -43,18 +41,18 @@ Expected labels, filenames and case IDs are withheld from model input. The
 classifier receives the same extracted email JSON used in production. There is
 no content-based hard-coded override for particular ham samples.
 
-## Run on manta before service restart
+## Run on the model host
 
 ```bash
 cd /opt/aissa
-python3 -m aissa.evaluate evaluation/manifest.json --prompt previous --timeout 120 --output evaluation-before.jsonl
+# Only if you have preserved a previous_prompt.txt locally:
+# python3 -m aissa.evaluate evaluation/manifest.json --prompt previous --timeout 120 --output evaluation-before.jsonl
 python3 -m aissa.evaluate evaluation/manifest.json --prompt current --timeout 120 --output evaluation-after.jsonl
-tail -n 1 evaluation-before.jsonl
 tail -n 1 evaluation-after.jsonl
 ```
 
 This calls Ollama directly, bypassing rspamd/bridge result caches. The old running
-bridge continues using its old in-memory prompt until restarted. Each comparison
+bridge continues using its old in-memory prompt until restarted. Each complete
 run performs 25 sequential model requests and may take several minutes on CPU.
 Run with little other inference traffic. First model load, shared CPU contention,
 and Ollama caching affect timing; the reported times are not cold-load or queue
@@ -87,11 +85,11 @@ When bridge outstanding=0, restart aissa to load the new prompt:
 systemctl restart aissa
 ```
 
-No rspamd reload is necessary for this prompt-only change. A restart loses pending
+No rspamd reload is necessary for a prompt-only change. A restart loses pending
 bridge jobs/results/cache, so wait for processing and acknowledgement. There is
-no automatic quality gate in the installer: unit tests verify plumbing, not real
-LLM decisions. To revert the prompt, restore analyzer.py from the printed backup
-and restart after outstanding=0; the copied module may remain unused.
+no automatic model-quality gate: unit tests verify plumbing, not real
+LLM decisions. To revert a prompt change, restore the intended `aissa/prompt.py` version and
+restart after outstanding=0.
 
 The project README links this document. Source modules, manifest, synthetic mail
 and tests may be committed publicly. Local baseline prompt/results can be kept

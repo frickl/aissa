@@ -156,8 +156,8 @@ invalid confidence, HTTP failures, capacity and duplicate submissions. They do
 not substitute for rspamadm configtest and a real scan on the installed rspamd.
 
 Lua base64 conversion retains `tostring(util.encode_base64(value, 0))`, as required
-by rspamd_text. The existing token path is `/etc/rspamd/local.d/aissa.token` in
-both bridge service JSON and Lua configuration; preserve its permissions. Country
+by rspamd_text. The bridge token is `/opt/aissa/deploy/aissa.token`; Lua uses the matching
+secret at `/etc/rspamd/local.d/aissa.token`. Preserve their permissions. Country
 metadata remains rspamd's supplied mempool country, not a promise of exact GeoIP.
 Mail text is treated as untrusted model input; this is not proof against prompt
 injection. No external LLM service is used by this integration.
