@@ -37,16 +37,19 @@ class BridgeScoringTests(unittest.TestCase):
 
     def test_text_budget_and_safe_metrics_reach_result(self):
         self.engine.cfg['max_text_chars'] = 800
+        self.engine.cfg['keep_alive_seconds'] = 900
         verdict = dict(classification='ham', confidence=.5, elapsed_seconds=2,
                        model='test', input_text_chars=800, text_truncated=True,
-                       prompt_eval_duration_seconds=1.5, reason='private text')
+                       prompt_eval_duration_seconds=1.5, prompt_eval_cached_count=300,
+                       reason='private text')
         with patch('aissa.bridge.classify', return_value=verdict) as backend, contextlib.redirect_stdout(io.StringIO()):
             self.engine.process(b'mail', self.meta)
-        backend.assert_called_once_with(b'mail', 'test', 60, 800)
+        backend.assert_called_once_with(b'mail', 'test', 60, 800, 900)
         result = self.engine.verdict(self.meta['event_id'])
         self.assertEqual(result['input_text_chars'], 800)
         self.assertTrue(result['text_truncated'])
         self.assertEqual(result['prompt_eval_duration_seconds'], 1.5)
+        self.assertEqual(result['prompt_eval_cached_count'], 300)
         self.assertNotIn('reason', result)
 
     def test_error_never_becomes_ham(self):

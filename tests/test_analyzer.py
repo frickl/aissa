@@ -87,7 +87,7 @@ class AnalyzerTests(unittest.TestCase):
         response.__enter__.return_value.read.return_value = json.dumps({'done': True,
             'message': {'content': json.dumps(verdict)},
             'prompt_eval_duration': 2000000000, 'eval_duration': 500000000,
-            'prompt_eval_count': 80, 'eval_count': 12}).encode()
+            'prompt_eval_count': 80, 'prompt_eval_cached_count': 60, 'eval_count': 12}).encode()
         with patch('urllib.request.build_opener') as factory:
             factory.return_value.open.return_value = response
             result = classify(b'Subject: Hello\n\nBonjour')
@@ -95,12 +95,24 @@ class AnalyzerTests(unittest.TestCase):
             payload = json.loads(request.data)
             self.assertEqual(request.full_url, 'http://127.0.0.1:11434/api/chat')
             self.assertFalse(payload['stream'])
+            self.assertEqual(payload['keep_alive'], 1800)
             self.assertEqual(payload['options']['num_thread'], 2)
             self.assertEqual(result['mode'], 'observe')
             self.assertEqual(result['classification'], 'phishing')
             self.assertEqual(result['prompt_eval_duration_seconds'], 2)
             self.assertEqual(result['eval_duration_seconds'], .5)
             self.assertEqual(result['input_text_chars'], 7)
+            self.assertEqual(result['prompt_eval_cached_count'], 60)
+            classify(b'Subject: Hello\n\nBonjour', keep_alive_seconds=300)
+            custom = json.loads(factory.return_value.open.call_args.args[0].data)
+            self.assertEqual(custom['keep_alive'], 300)
+
+    def test_invalid_keep_alive_fails_before_backend_request(self):
+        with patch('urllib.request.build_opener') as factory:
+            for value in (True, -1, 86401, '30m', 1.5):
+                with self.assertRaises(ValueError):
+                    classify(b'Subject: Hello\n\ntext', keep_alive_seconds=value)
+            factory.assert_not_called()
 
     def test_backend_failure_not_ham(self):
         with patch('urllib.request.build_opener') as factory:

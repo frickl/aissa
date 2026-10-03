@@ -84,7 +84,8 @@ class Engine:
             raw, meta = self.jobs.get()
             try:
                 verdict = classify(raw, self.cfg['model'], self.cfg['llm_timeout'],
-                                   self.cfg.get('max_text_chars', 1000))
+                                   self.cfg.get('max_text_chars', 1000),
+                                   self.cfg.get('keep_alive_seconds', 1800))
                 self.count('completed')
                 if verdict['classification'] in ('spam', 'phishing'):
                     try:
@@ -179,6 +180,9 @@ def main():
     max_text = cfg.get("max_text_chars", 1000)
     if type(max_text) is not int or not 100 <= max_text <= 4000:
         raise ValueError("Invalid max_text_chars (100..4000)")
+    keep_alive = cfg.get("keep_alive_seconds", 1800)
+    if type(keep_alive) is not int or not 0 <= keep_alive <= 86400:
+        raise ValueError("Invalid keep_alive_seconds (0..86400)")
     token = Path(cfg['token_file']).read_text().strip()
     if len(token) < 32:
         raise ValueError('Use a token of at least 32 characters')

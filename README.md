@@ -221,8 +221,14 @@ in memory; only extracted content is sent to the local model.
 The default 1000 is a provisional CPU latency budget, not a guarantee that
 inference finishes within the SMTP wait. Truncation can hide attacks; validate
 quality on representative mail before increasing enforcement.
+`keep_alive_seconds` controls how long Ollama retains the model after each
+request (0–86400 seconds, default 1800 = 30 minutes; 0 unloads immediately).
+This improves the opportunity for prompt-prefix reuse, but does not guarantee
+cache hits or prewarm the model at service start. All requests remain independent;
+previous mails are not appended as chat history. Model and context memory stay
+resident longer.
 Bridge results include input length, truncation and available Ollama token
-counts and load/prompt/generation timings, without mail text or model reason.
+counts (including `prompt_eval_cached_count` when provided) and load/prompt/generation timings, without mail text or model reason.
 HTML extraction is basic. A stricter prompt forbids claims of virus/attachment
 inspection, but cannot guarantee that the model will follow that instruction.
 No URL is fetched. Prompt injection remains a model-quality risk.

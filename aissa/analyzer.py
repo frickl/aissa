@@ -91,7 +91,9 @@ def validate(value):
     return value
 
 
-def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None):
+def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None, keep_alive_seconds=1800):
+    if type(keep_alive_seconds) is not int or not 0 <= keep_alive_seconds <= 86400:
+        raise ValueError("Invalid keep_alive_seconds (0..86400)")
     sample = extract(raw, max_text_chars)
     payload = {
         "model": model, "stream": False, "format": SCHEMA,
@@ -99,7 +101,7 @@ def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None):
                      {"role": "user", "content": json.dumps(sample, ensure_ascii=False)}],
         "options": {"temperature": 0, "seed": 42, "num_thread": 2,
                     "num_ctx": 4096, "num_predict": 192},
-        "keep_alive": "5m",
+        "keep_alive": keep_alive_seconds,
     }
     request = urllib.request.Request("http://127.0.0.1:11434/api/chat",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
@@ -122,7 +124,7 @@ def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None):
         value = result.get(key)
         if type(value) in (int, float) and math.isfinite(value) and value >= 0:
             timings[key + "_seconds"] = round(value / 1e9, 3)
-    for key in ("prompt_eval_count", "eval_count"):
+    for key in ("prompt_eval_count", "prompt_eval_cached_count", "eval_count"):
         value = result.get(key)
         if type(value) is int and value >= 0:
             timings[key] = value
