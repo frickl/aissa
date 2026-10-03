@@ -1,0 +1,194 @@
+diff --git a/docs/aissa-scoring.md b/docs/aissa-scoring.md
+index 3a0bd20..7806226 100644
+--- a/docs/aissa-scoring.md
++++ b/docs/aissa-scoring.md
+@@ -19,6 +19,10 @@ scoring. Low volume permits `sample_percent = 100`; conditions still apply.
+ 6. In scoring mode Lua polls `/verdict` every 0.25 seconds, using short HTTP
+    requests. Poll timers belong to the current rspamd task. Its monotonic budget
+    starts when the AISSA callback begins, including AISSA Redis/submission time.
++   Live waiting is also capped by the global `options.task_timeout` minus time
++   already spent in this scan and a one-second completion reserve. If that
++   budget is exhausted, AISSA does not submit another model job. If the outer
++   limit is unavailable, it reports `scan_budget_unavailable` without live waiting.
+ 7. A valid result arriving before the deadline inserts exactly one class symbol.
+    rspamd combines its weight with existing rules and chooses its normal action.
+    AISSA never directly forces accept/reject/greylist or modifies SMTP direction.
+@@ -35,6 +39,7 @@ Keep the existing loader and configuration includes. Add to
+ sample_percent = 100;
+ scoring_enabled = true;
+ score_wait_seconds = 10;
++scan_finish_reserve_seconds = 1;
+ .include "$LOCAL_CONFDIR/local.d/aissa-scores.conf"
+ ```
+ 
+@@ -79,14 +84,18 @@ remain zero. Model results can contribute to rejection together with other rules
+ 
+ ## Timeouts and activation
+ 
+-A 10-second AISSA wait needs a larger *overall* rspamd task timeout to leave room
+-for preceding filters. Check actual scanner, proxy self-scan and controller
+-configuration; commonly used defaults are only 8 seconds. Set `task_timeout =
+-20s;` in the applicable worker's local configuration before enabling the 10-second
+-wait. Typical files are `local.d/worker-normal.inc`,
+-`local.d/worker-proxy.inc` (self-scan), and `local.d/worker-controller.inc` (rspamc).
+-Keep client/MTA deadlines above the overall scan timeout. Raising only the
+-rspamc client timeout does not raise the worker's task timeout.
++A 10-second AISSA wait requires room for preceding filters and scan completion.
++The global scan limit is configured in `local.d/options.inc` as `task_timeout`;
++it is distinct from the proxy's connection I/O `timeout`. AISSA caps its live
++budget against that global limit, reserving `scan_finish_reserve_seconds`
++(default 1, allowed 0.1–5). For example, with 4.324 seconds already spent and a
++30-second scan limit, a requested 30-second AISSA wait is shortened to about
++24.676 seconds and ends by scan second 29. Per-worker or per-task lower limits
++are not discovered by this cap; verify these separately. Event-loop stalls and
++other filters are not controlled by AISSA, so this is not a hard SMTP deadline.
++Keep client/MTA deadlines above the overall scan timeout. Do not reactivate on
++production based only on unit tests: test a pending verdict through the actual
++installed rspamd and verify scan completion, History and SMTP acknowledgement.
+ 
+ The bridge's existing `llm_timeout` is independent: it limits a background Ollama
+ request, not the live SMTP wait. A slow 60-second inference may still yield
+diff --git a/rspamd/aissa.lua b/rspamd/aissa.lua
+index fc420cc..9c40563 100644
+--- a/rspamd/aissa.lua
++++ b/rspamd/aissa.lua
+@@ -35,6 +35,11 @@ assert(cfg.scoring_enabled == nil or type(cfg.scoring_enabled) == 'boolean',
+ local wait_seconds = tonumber(cfg.score_wait_seconds or 10)
+ assert(wait_seconds and wait_seconds >= 1 and wait_seconds <= 30,
+        'invalid score_wait_seconds (1..30)')
++local scan_options = rspamd_config:get_all_opt('options') or {}
++local scan_timeout = tonumber(scan_options.task_timeout)
++local finish_reserve = tonumber(cfg.scan_finish_reserve_seconds or 1)
++assert(finish_reserve and finish_reserve >= 0.1 and finish_reserve <= 5,
++       'invalid scan_finish_reserve_seconds (0.1..5)')
+ local weights = cfg.scores or {}
+ assert(type(weights) == 'table', 'invalid aissa scores')
+ local defaults = {phishing=3, spam=1, bulk=0, ham=0, uncertain=0}
+@@ -234,7 +239,21 @@ return 1
+ ]]
+ 
+ local function scan(task)
+-  local deadline = util.get_ticks() + wait_seconds
++  local budget = wait_seconds
++  if scoring then
++    -- get_timeval(true) is the scan's wall-clock start, not this postfilter's
++    -- start. Convert remaining time once, then use monotonic ticks for polling.
++    -- Unknown outer limits must not permit an unbounded live wait.
++    local task_start = task:get_timeval(true)
++    if not scan_timeout or scan_timeout <= 0 or type(task_start) ~= 'number' then
++      mark(task, 'scan_budget_unavailable')
++      return
++    end
++    local elapsed = math.max(0, util.get_time() - task_start)
++    budget = math.min(budget, scan_timeout - elapsed - finish_reserve)
++    if budget <= 0 then mark(task, 'score_timeout'); return end
++  end
++  local deadline = util.get_ticks() + budget
+   local ip = task:get_from_ip()
+   local country = task:get_mempool():get_variable('country', 'string') or ''
+   local qid = task:get_queue_id() or ''
+@@ -276,6 +295,9 @@ local function scan(task)
+     if not conditions(task, meta.country, counts) then mark(task, 'criteria'); return end
+     if math.random()*100 >= percent then mark(task, 'sample'); return end
+     if task:get_size() > size_limit then mark(task, 'size'); return end
++    if scoring and util.get_ticks() >= deadline then
++      mark(task, 'score_timeout'); return
++    end
+ 
+     local started = http.request({
+       task = task, url = endpoint .. '/submit', method = 'POST',
+diff --git a/tests/aissa_scoring_harness.lua b/tests/aissa_scoring_harness.lua
+index 5bc365e..0004667 100644
+--- a/tests/aissa_scoring_harness.lua
++++ b/tests/aissa_scoring_harness.lua
+@@ -1,10 +1,13 @@
+ -- Contract tests with a deterministic event loop; not a substitute for rspamadm.
+ local function run(opts)
+-  local now, events, marks, registered, payload = 0, {}, {}, {}, nil
++  local now, events, marks, registered, payload = opts.preceding or 0, {}, {}, {}, nil
++  local outer_timeout = opts.outer_timeout or 8
++  local async_timers = 0
+   local attempts = 0
+   local cfg = {
+     enabled=true, scoring_enabled=opts.scoring ~= false, sample_percent=100,
+     score_wait_seconds=opts.wait or 1, scores={phishing=3, spam=1, ham=0},
++    scan_finish_reserve_seconds=opts.reserve,
+   }
+   local function schedule(delay, fn) events[#events+1]={at=now+delay,fn=fn} end
+   local http = {}
+@@ -27,6 +30,7 @@ local function run(opts)
+   end
+   package.loaded.rspamd_http = http
+   package.loaded.rspamd_util = {get_ticks=function() return now end,
++    get_time=function() return 1700000000 + now end,
+     encode_base64=function(value) return value end}
+   package.loaded.rspamd_logger = {infox=function() end, warnx=function() end}
+   package.loaded.ucl = {to_json=function() return '{}' end,
+@@ -42,7 +46,12 @@ local function run(opts)
+     end,
+   }
+   rspamd_config = {
+-    get_all_opt=function() return cfg end,
++    get_all_opt=function(_, section)
++      if section == 'options' then
++        return {task_timeout=not opts.missing_scan_timeout and outer_timeout or nil}
++      end
++      return cfg
++    end,
+     add_on_load=function() end,
+     register_symbol=function(_, symbol)
+       registered[symbol.name]=symbol
+@@ -55,6 +64,7 @@ local function run(opts)
+   io.open=real_open
+   assert(ok, err)
+   local task = {
++    get_timeval=function(_,raw) assert(raw == true); return 1700000000 end,
+     get_from_ip=function() return nil end,
+     get_mempool=function() return {get_variable=function() return nil end} end,
+     get_queue_id=function() return 'qid' end,
+@@ -66,7 +76,16 @@ local function run(opts)
+     insert_result=function(_,symbol,weight,option)
+       marks[#marks+1]={symbol=symbol,points=weight*registered[symbol].score,option=option}
+     end,
+-    add_timer=function(_,delay,cb) schedule(delay,cb) end,
++    add_timer=function(_,delay,cb)
++      async_timers=async_timers+1
++      schedule(delay,function()
++        -- Non-numeric callback results retire rspamd task timers. A new HTTP
++        -- request may be scheduled by the callback before the timer is retired.
++        local result=cb(task)
++        assert(type(result) ~= 'number', 'Unexpected repeating task timer')
++        async_timers=async_timers-1
++      end)
++    end,
+   }
+   registered.AISSA_OBSERVE.callback(task)
+   local n=0
+@@ -74,10 +93,12 @@ local function run(opts)
+     table.sort(events,function(a,b) return a.at < b.at end)
+     local event=table.remove(events,1)
+     now=event.at
++    assert(now < outer_timeout, 'Outer scan timeout reached with AISSA still pending')
+     event.fn()
+     n=n+1
+     assert(n<200, 'Unbounded polling')
+   end
++  assert(async_timers == 0, 'Task timer left pending')
+   local total, status, class=0,nil,nil
+   for _,mark in ipairs(marks) do
+     total=total+mark.points
+@@ -117,3 +138,14 @@ p,s,c=run({submit_code=429})
+ assert(p==0 and s=='capacity' and c==nil)
+ p,s,c=run({submit_code=200})
+ assert(p==3 and s=='scored' and c=='AISSA_PHISHING')
++
++-- Production regression: 4.324 seconds of preceding rules, 30-second AISSA
++-- wait and 30-second total scan limit. Finish by 29, with no timer remaining.
++p,s,c,elapsed,attempts=run({preceding=4.324,wait=30,outer_timeout=30,pending_forever=true})
++assert(p==0 and s=='score_timeout' and c==nil and elapsed<=29.001)
++p,s,c,elapsed=run({preceding=7.5,outer_timeout=8,pending_forever=true})
++assert(p==0 and s=='score_timeout' and c==nil and elapsed==7.5)
++p,s,c,elapsed,attempts=run({missing_scan_timeout=true})
++assert(p==0 and s=='scan_budget_unavailable' and attempts==0)
++p,s,c,elapsed=run({preceding=4.324,wait=30,outer_timeout=30,pending_once=true})
++assert(p==3 and s=='scored' and c=='AISSA_PHISHING' and elapsed<5)
