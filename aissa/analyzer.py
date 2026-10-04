@@ -195,18 +195,21 @@ def validate(value):
 
 
 def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None,
-             keep_alive_seconds=1800, *, num_threads=2, think=None):
+             keep_alive_seconds=1800, *, num_threads=2, think=None, system_prompt=None):
     if type(num_threads) is not int or not 1 <= num_threads <= 64:
         raise ValueError("Invalid num_threads (1..64)")
     if think is not None and type(think) is not bool:
         raise ValueError("Invalid think (boolean or None)")
     if type(keep_alive_seconds) is not int or not 0 <= keep_alive_seconds <= 86400:
         raise ValueError("Invalid keep_alive_seconds (0..86400)")
+    if system_prompt is not None and (not isinstance(system_prompt, str) or
+            not system_prompt.strip() or len(system_prompt) > 16000):
+        raise ValueError("Invalid system_prompt (1..16000 characters)")
     sample = extract(raw, max_text_chars)
     input_json = json.dumps(sample, ensure_ascii=False)
     payload = {
         "model": model, "stream": False, "format": SCHEMA,
-        "messages": [{"role": "system", "content": SYSTEM},
+        "messages": [{"role": "system", "content": SYSTEM if system_prompt is None else system_prompt},
                      {"role": "user", "content": input_json}],
         "options": {"temperature": 0, "seed": 42, "num_thread": num_threads,
                     "num_ctx": 4096, "num_predict": 192},

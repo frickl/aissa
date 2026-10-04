@@ -177,6 +177,29 @@ class AnalyzerTests(unittest.TestCase):
             self.assertEqual(custom['options']['num_thread'], 4)
             self.assertIs(custom['think'], False)
 
+    def test_prompt_override_is_per_request(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            'done': True, 'message': {'content': json.dumps({
+                'classification': 'uncertain', 'confidence': 0.5, 'reason': 'Test'})}
+        }).encode()
+        with patch('urllib.request.build_opener') as factory:
+            factory.return_value.open.return_value = response
+            classify(b'Subject: Test\n\nHello', system_prompt='Check spam.')
+            payload = json.loads(factory.return_value.open.call_args.args[0].data)
+            self.assertEqual(payload['messages'][0]['content'], 'Check spam.')
+            classify(b'Subject: Test\n\nHello')
+            payload = json.loads(factory.return_value.open.call_args.args[0].data)
+            from aissa.prompt import SYSTEM
+            self.assertEqual(payload['messages'][0]['content'], SYSTEM)
+
+    def test_invalid_prompt_fails_before_backend_request(self):
+        with patch('urllib.request.build_opener') as factory:
+            for value in ('', '   ', 'x' * 16001, 42):
+                with self.assertRaises(ValueError):
+                    classify(b'Hello', system_prompt=value)
+            factory.assert_not_called()
+
     def test_invalid_keep_alive_fails_before_backend_request(self):
         with patch('urllib.request.build_opener') as factory:
             for value in (True, -1, 86401, '30m', 1.5):

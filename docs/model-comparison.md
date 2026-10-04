@@ -59,3 +59,12 @@ stopped. No service restart is needed for CLI tests; do not change the productio
 model tag until quality and latency have been measured.
 
 Sources: https://docs.ollama.com/api/chat and the model tag page above.
+
+## Compare prompts offline
+
+Add `--prompt-file docs/prompts/compact.txt` to the same CLI command to test
+a short general prompt without changing the service prompt. Omitting the option
+uses the existing rubric. Prompt files must be nonempty UTF-8 text, at most
+16,000 characters. Changed prompts can invalidate the prefix cache. Compare
+multiple known spam and legitimate messages, not just one motivating example.
+The JSON schema and mail extraction remain the same.
