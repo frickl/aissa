@@ -160,6 +160,7 @@ class AnalyzerTests(unittest.TestCase):
             self.assertFalse(payload['stream'])
             self.assertEqual(payload['keep_alive'], 1800)
             self.assertEqual(payload['options']['num_thread'], 2)
+            self.assertNotIn('think', payload)
             self.assertEqual(result['mode'], 'observe')
             self.assertEqual(result['classification'], 'phishing')
             self.assertEqual(result['prompt_eval_duration_seconds'], 2)
@@ -171,12 +172,26 @@ class AnalyzerTests(unittest.TestCase):
             classify(b'Subject: Hello\n\nBonjour', keep_alive_seconds=300)
             custom = json.loads(factory.return_value.open.call_args.args[0].data)
             self.assertEqual(custom['keep_alive'], 300)
+            classify(b'Subject: Hello\n\nBonjour', num_threads=4, think=False)
+            custom = json.loads(factory.return_value.open.call_args.args[0].data)
+            self.assertEqual(custom['options']['num_thread'], 4)
+            self.assertIs(custom['think'], False)
 
     def test_invalid_keep_alive_fails_before_backend_request(self):
         with patch('urllib.request.build_opener') as factory:
             for value in (True, -1, 86401, '30m', 1.5):
                 with self.assertRaises(ValueError):
                     classify(b'Subject: Hello\n\ntext', keep_alive_seconds=value)
+            factory.assert_not_called()
+
+    def test_invalid_offline_options_fail_before_backend(self):
+        with patch('urllib.request.build_opener') as factory:
+            for value in (True, 0, 65, '4', 2.5):
+                with self.assertRaises(ValueError):
+                    classify(b'Hello', num_threads=value)
+            for value in (0, 1, 'false', 'low'):
+                with self.assertRaises(ValueError):
+                    classify(b'Hello', think=value)
             factory.assert_not_called()
 
     def test_backend_failure_not_ham(self):

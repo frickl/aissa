@@ -141,6 +141,7 @@ implementation.
 - [MIME extraction and shared input budget](docs/extraction.md)
 - [Live scoring and timeout behavior](docs/aissa-scoring.md)
 - [Classifier evaluation](docs/aissa-evaluation.md)
+- [Offline model and thread comparison](docs/model-comparison.md)
 - [Measured field notes](docs/field-notes.md)
 - [Static project page and deployment](website/README.md)
 

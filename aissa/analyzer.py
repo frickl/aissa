@@ -194,7 +194,12 @@ def validate(value):
     return value
 
 
-def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None, keep_alive_seconds=1800):
+def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None,
+             keep_alive_seconds=1800, *, num_threads=2, think=None):
+    if type(num_threads) is not int or not 1 <= num_threads <= 64:
+        raise ValueError("Invalid num_threads (1..64)")
+    if think is not None and type(think) is not bool:
+        raise ValueError("Invalid think (boolean or None)")
     if type(keep_alive_seconds) is not int or not 0 <= keep_alive_seconds <= 86400:
         raise ValueError("Invalid keep_alive_seconds (0..86400)")
     sample = extract(raw, max_text_chars)
@@ -203,10 +208,13 @@ def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None, keep_al
         "model": model, "stream": False, "format": SCHEMA,
         "messages": [{"role": "system", "content": SYSTEM},
                      {"role": "user", "content": input_json}],
-        "options": {"temperature": 0, "seed": 42, "num_thread": 2,
+        "options": {"temperature": 0, "seed": 42, "num_thread": num_threads,
                     "num_ctx": 4096, "num_predict": 192},
         "keep_alive": keep_alive_seconds,
     }
+    # Preserve existing behavior unless the caller explicitly controls thinking.
+    if think is not None:
+        payload["think"] = think
     request = urllib.request.Request("http://127.0.0.1:11434/api/chat",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     started = time.monotonic()
@@ -236,5 +244,6 @@ def classify(raw, model="qwen2.5:1.5b", timeout=60, max_text_chars=None, keep_al
             "input_url_chars": sum(map(len, sample["urls"])),
             "input_json_chars": len(input_json),
             "urls_truncated": sample["urls_truncated"],
-            "urls_omitted": sample["urls_omitted"], "model": model, "elapsed_seconds": round(time.monotonic() - started, 3),
+            "urls_omitted": sample["urls_omitted"], "num_threads": num_threads,
+            "thinking_requested": think, "model": model, "elapsed_seconds": round(time.monotonic() - started, 3),
             "text_truncated": sample["text_truncated"], "mode": "observe"}
