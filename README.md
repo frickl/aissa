@@ -103,7 +103,8 @@ blindly into production.
 ## Limits that matter
 
 - Confidence is an uncalibrated model self-assessment, not a probability of abuse.
-- Body extraction defaults to 1,000 characters; truncation may hide decisive text.
+- Body text and URL prefixes share a 1,000-character budget by default;
+  truncation may hide decisive evidence. Layout padding is cleaned before clipping.
 - No attachment inspection, virus scanning, OCR, URL fetching or account locking.
 - Prompt instructions do not guarantee resistance to invented evidence or prompt
   injection from hostile mail content.
@@ -137,6 +138,7 @@ implementation.
 
 - [Installation and operations](docs/installation.md)
 - [Architecture, Redis and reputation](docs/architecture.md)
+- [MIME extraction and shared input budget](docs/extraction.md)
 - [Live scoring and timeout behavior](docs/aissa-scoring.md)
 - [Classifier evaluation](docs/aissa-evaluation.md)
 - [Measured field notes](docs/field-notes.md)

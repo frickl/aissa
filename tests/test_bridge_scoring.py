@@ -39,7 +39,8 @@ class BridgeScoringTests(unittest.TestCase):
         self.engine.cfg['max_text_chars'] = 800
         self.engine.cfg['keep_alive_seconds'] = 900
         verdict = dict(classification='ham', confidence=.5, elapsed_seconds=2,
-                       model='test', input_text_chars=800, text_truncated=True,
+                       model='test', input_text_chars=800, input_url_chars=0,
+                       input_json_chars=1100, urls_truncated=True, urls_omitted=2, text_truncated=True,
                        prompt_eval_duration_seconds=1.5, prompt_eval_cached_count=300,
                        reason='private text')
         with patch('aissa.bridge.classify', return_value=verdict) as backend, contextlib.redirect_stdout(io.StringIO()):
@@ -48,6 +49,10 @@ class BridgeScoringTests(unittest.TestCase):
         result = self.engine.verdict(self.meta['event_id'])
         self.assertEqual(result['input_text_chars'], 800)
         self.assertTrue(result['text_truncated'])
+        self.assertEqual(result['input_url_chars'], 0)
+        self.assertEqual(result['input_json_chars'], 1100)
+        self.assertTrue(result['urls_truncated'])
+        self.assertEqual(result['urls_omitted'], 2)
         self.assertEqual(result['prompt_eval_duration_seconds'], 1.5)
         self.assertEqual(result['prompt_eval_cached_count'], 300)
         self.assertNotIn('reason', result)

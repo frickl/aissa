@@ -72,7 +72,8 @@ class Bridge(Engine):
                 "elapsed_seconds": verdict["elapsed_seconds"],
                 "model": verdict["model"],
             })
-            for key in ("input_text_chars", "text_truncated", "load_duration_seconds",
+            for key in ("input_text_chars", "input_url_chars", "input_json_chars",
+                        "urls_truncated", "urls_omitted", "text_truncated", "load_duration_seconds",
                         "prompt_eval_duration_seconds", "eval_duration_seconds",
                         "prompt_eval_count", "prompt_eval_cached_count", "eval_count"):
                 if key in verdict:

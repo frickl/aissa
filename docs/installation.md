@@ -33,9 +33,13 @@ loopback (`127.0.0.1:11434`). The bridge listens on `127.0.0.1:8765`.
 
 `deploy/service.local.json` and `deploy/aissa.token` are untracked local files.
 Defaults are one worker, 20 queued messages, 10 admissions per fixed minute,
-1,000 outstanding jobs/results, 60-second model network timeout, 1,000 text
-characters and 1,800 seconds of Ollama model retention. Retention can help
+1,000 outstanding jobs/results, 60-second model network timeout, a shared 1,000-character body/URL
+budget and 1,800 seconds of Ollama model retention. Retention can help
 prompt-prefix reuse but does not guarantee a cache hit or prewarm the model.
+
+See [extraction limits](extraction.md) for the changed meaning of
+`max_text_chars`, cleanup and diagnostics. Headers, JSON and the system prompt
+are additional input; this is not a token limit.
 
 ## Rspamd integration
 

@@ -74,6 +74,69 @@ class AnalyzerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 extract(raw, budget)
 
+    def test_padding_cleaned_before_budget(self):
+        body = (' ' * 1500 + '\u00a0\u200c' * 200
+                + 'Bonjour,   notre rendez-vous est demain.\nMerci.')
+        raw = ('Content-Type: text/plain; charset=utf-8\n\n' + body).encode()
+        result = extract(raw)
+        self.assertEqual(result['text'], 'Bonjour, notre rendez-vous est demain. Merci.')
+        self.assertFalse(result['text_truncated'])
+        self.assertTrue(result['text_cleaned'])
+
+    def test_meaningful_joiners_and_zero_width_word_boundary(self):
+        body = 'می\u200cروم 👩\u200d💻 pay\u200bnow'
+        raw = ('Content-Type: text/plain; charset=utf-8\n\n' + body).encode()
+        self.assertEqual(extract(raw)['text'], 'می\u200cروم 👩\u200d💻 pay now')
+
+    def test_stylesheets_excluded_but_anchor_query_preserved(self):
+        url = 'https://example.org/check?redirect=https%3A%2F%2Fevil.invalid&token=123'
+        html = ('<link rel="stylesheet" href="https://fonts.example.org/style.css">'
+                '<style>a {color:red}</style><p>Hello</p><p>World</p>'
+                '<a href="' + url + '">Check</a>')
+        result = extract(('Content-Type: text/html\n\n' + html).encode())
+        self.assertEqual(result['urls'], [url])
+        self.assertEqual(result['text'], 'Hello World Check')
+        self.assertFalse(result['urls_truncated'])
+
+    def test_tracking_links_and_text_share_budget(self):
+        html = '<p>' + 'Offer ' * 300 + '</p>'
+        urls = ['https://shop.example.org/item?id=' + str(i) + '&tracking=' + 'x' * 400
+                for i in range(20)]
+        html += ''.join('<a href="' + u + '">Buy</a>' for u in urls)
+        result = extract(('Content-Type: text/html\n\n' + html).encode())
+        self.assertLessEqual(len(result['text']) + sum(map(len, result['urls'])), 1000)
+        self.assertGreaterEqual(len(result['text']), 666)
+        self.assertTrue(result['urls_truncated'])
+        self.assertGreater(result['urls_omitted'], 0)
+        for url in result['urls']:
+            self.assertTrue(any(original.startswith(url) for original in urls))
+            self.assertTrue(url.startswith('https://shop.example.org/'))
+
+    def test_distinct_host_not_crowded_out_by_repeated_tracking_links(self):
+        html = ''.join('<a href="https://shop.example.org/item?tracking=' + str(i)
+                       + '">Buy</a>' for i in range(20))
+        html += '<a href="https://different.invalid/password">Verify</a>'
+        result = extract(('Content-Type: text/html\n\n' + html).encode())
+        self.assertIn('https://different.invalid/password', result['urls'])
+
+    def test_complete_authority_or_explicit_omission(self):
+        urls = ['https://trusted.example@evil.invalid:8443/check?' + 'x' * 500,
+                'https://' + 'a' * 350 + '.invalid/path']
+        html = '<p>' + 'Text ' * 200 + '</p>'
+        html += ''.join('<a href="' + u + '">Link</a>' for u in urls)
+        result = extract(('Content-Type: text/html\n\n' + html).encode())
+        self.assertTrue(result['urls'][0].startswith('https://trusted.example@evil.invalid:8443'))
+        self.assertEqual(result['urls_omitted'], 1)
+        self.assertTrue(result['urls_truncated'])
+
+    def test_shared_budget_at_every_supported_setting(self):
+        html = '<p>' + 'word ' * 1500 + '</p>'
+        html += '<a href="https://example.org/?tracking=' + 'x' * 800 + '">Buy</a>'
+        raw = ('Content-Type: text/html\n\n' + html).encode()
+        for budget in (100, 800, 1000, 4000):
+            sample = extract(raw, budget)
+            self.assertLessEqual(len(sample['text']) + sum(map(len, sample['urls'])), budget)
+
     def test_invalid_confidence_and_fields(self):
         for value in [True, float('nan'), float('inf'), -1, 2, '0.9']:
             with self.assertRaises(ValueError):
@@ -102,6 +165,8 @@ class AnalyzerTests(unittest.TestCase):
             self.assertEqual(result['prompt_eval_duration_seconds'], 2)
             self.assertEqual(result['eval_duration_seconds'], .5)
             self.assertEqual(result['input_text_chars'], 7)
+            self.assertEqual(result['input_url_chars'], 0)
+            self.assertEqual(result['input_json_chars'], len(payload['messages'][1]['content']))
             self.assertEqual(result['prompt_eval_cached_count'], 60)
             classify(b'Subject: Hello\n\nBonjour', keep_alive_seconds=300)
             custom = json.loads(factory.return_value.open.call_args.args[0].data)
